@@ -3,4 +3,5 @@ project(2phaselocking)
 
 set(CMAKE_CXX_STANDARD 11)
 
-add_executable(2phaselocking main.cpp)
+include_directories(include)
+add_executable(2phaselocking src/main.cpp)
