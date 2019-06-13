@@ -1,36 +1,47 @@
 #ifndef INC_2PHASELOCKING_ROW_H
 #define INC_2PHASELOCKING_ROW_H
-#include <assert.h>
-#include "Attribute.h"
+
+#include <mutex>
 
 using namespace std;
 
 class Row {
+
+ private:
+  int key;
+  int data;
+
+
  public:
-  vector<Attribute> attributes;
 
-  Row(int size) {
-    for(int i = 0; i < size; ++i) {
-      Attribute attribute;
-      attribute.data = 0;
-      attributes.push_back(attribute);
-    }
+  mutable mutex lock;
+
+  int getKey() {
+    return this->key;
   }
 
-  void print_row() {
-    for(Attribute& attribute:attributes) {
-      cout << attribute.data << " ";
-    }
-    cout << "\n";
+  void setKey(int key) {
+    this->key = key;
   }
 
-  void assert_attributes(int value) {
-    for(Attribute& attribute:attributes) {
-      assert(attribute.data == value);
-    }
+  int getData() {
+    return this->data;
   }
 
+  void setData(int d) {
+    this->data = d;
+  }
 
+  Row(Row const &row) {
+    lock_guard<mutex> (row.lock);
+    this->key = row.key;
+    this->data = row.data;
+  }
+
+  Row(int k, int d) {
+    this->key = k;
+    this->data = d;
+  }
 
 };
 

@@ -1,7 +1,6 @@
 #include <iostream>
 #include <thread>
 #include <vector>
-#include "Attribute.h"
 #include <random>
 #include <chrono>
 #include <algorithm>
@@ -9,42 +8,74 @@
 
 using namespace std;
 
-void perform_transaction(vector<Attribute>& v_data) {
+void perform_transaction(vector<Row>& rows) {
 
-  for(Attribute& element : v_data) {
-    element.lock.lock();
+  for(Row& row : rows) {
+    row.lock.lock();
   }
 
-  for(Attribute& element : v_data) {
-    int element_data = element.data;
-    element_data += 1;
-    element.data = element_data;
+  for(Row& row : rows) {
+    int row_data = row.getData();
+    row_data += 1;
+    row.setData(row_data);
   }
 
-  for(Attribute& element : v_data) {
-    element.lock.unlock();
+  for(Row& row : rows) {
+    row.lock.unlock();
   }
 
 }
 
-void worker(vector<Row>& table) {
-
-
+void worker(vector<Row>& table, int transactions, int operations, int t_id) {
 
   int size = table.size();
   vector<int> indices;
-  for(int i = 0; i < size; ++i) {
-    indices.push_back(i);
+  for(int j = 0; j < size; ++j) {
+    indices.push_back(j);
   }
 
-  auto rng = default_random_engine {};
-  shuffle(indices.begin(), indices.end(), rng);
 
-  for(int i : indices) {
+  for(int i = 0; i < transactions; ++i) {
 
-    vector<Attribute>& v_data = table[i].attributes;
 
-    perform_transaction(table[i].attributes);
+    auto rng = default_random_engine {};
+    shuffle(indices.begin(), indices.end(), rng);
+
+    vector<int> sorted_indices;
+    vector<int> operation_indices;
+
+    for(int k = 0; k < operations; ++k) {
+      sorted_indices.push_back(indices[k]);
+      operation_indices.push_back(indices[k]);
+    }
+
+    sort(sorted_indices.begin(), sorted_indices.end());
+
+    cout << "Thread " << t_id << " operating on indices: [";
+
+    for(int index : sorted_indices) {
+      cout << index << ",";
+    }
+
+    cout << "]\n";
+
+
+    for(int index : sorted_indices) {
+      Row& row = table[index];
+      row.lock.lock();
+    }
+
+    for(int index : operation_indices) {
+      Row& row = table[index];
+      int row_data = row.getData();
+      row_data += 1;
+      row.setData(row_data);
+    }
+
+    for(int index : sorted_indices) {
+      Row& row = table[index];
+      row.lock.unlock();
+    }
 
   }
 
@@ -52,16 +83,16 @@ void worker(vector<Row>& table) {
 
 int main() {
 
+  const int NUM_TRANSACTIONS = 1000000;
+  const int NUM_ROWS = 1000000;
+  const int NUM_OPERATIONS = 10;
+  const int NUM_THREADS = 4;
 
-
-  const int num_rows = 1000000;
-  const int num_attributes = 20;
-  const int num_threads = 4;
-  vector<thread> threads(num_threads);
+  vector<thread> threads(NUM_THREADS);
   vector<Row> table;
 
-  for(int i = 0; i < num_rows; ++i) {
-    Row row = Row(num_attributes);
+  for(int i = 0; i < NUM_ROWS; ++i) {
+    Row row = Row(i, 0);
     table.push_back(row);
   }
 
@@ -69,9 +100,13 @@ int main() {
 
   chrono::high_resolution_clock::time_point start = chrono::high_resolution_clock::now();
 
+  int thread_id = 0;
+
   for (thread& t : threads) {
-    t = thread(worker, ref(table));
+    t = thread(worker, ref(table), NUM_TRANSACTIONS, NUM_OPERATIONS, thread_id);
+    ++thread_id;
   }
+
 
   for (std::thread& th : threads) {
     th.join();
@@ -83,13 +118,6 @@ int main() {
 
   cout << "Finished after " << time << " nanoseconds \n";
 
-
-
-  cout << "Asserting all values are correct...\n";
-  for(Row& row : table) {
-    row.assert_attributes(num_threads);
-  }
-  cout << "All values are correct\n";
 }
 
 
