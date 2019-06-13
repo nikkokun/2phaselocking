@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../include/Row.h
+mutex
+-
+
+/Users/nicoroble/cpp/projects/2phaselocking/src/main.cpp
+iostream
+-
+thread
+-
+vector
+-
+random
+-
+chrono
+-
+algorithm
+-
+Row.h
+-
+

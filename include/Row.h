@@ -33,7 +33,6 @@ class Row {
   }
 
   Row(Row const &row) {
-    lock_guard<mutex> (row.lock);
     this->key = row.key;
     this->data = row.data;
   }
