@@ -4,39 +4,29 @@
 #include <random>
 #include <chrono>
 #include <algorithm>
-#include <row.h>
-
-const int NUM_OPERATIONS = 20;
-const int NUM_TRANSACTIONS = 4000000;
-const int NUM_RECORDS = 1000000;
-const int NUM_THREADS = 8;
-const int STRIDE = NUM_TRANSACTIONS / NUM_THREADS;
+#include <fstream>
+#include <string>
+#include <atomic>
 
 using namespace std;
 
+#define NUM_OPERATIONS 10
+#define NUM_TRANSACTIONS 8388608
+#define NUM_RECORDS 1000000
+#define NUM_RUNS 10
 
-vector<vector<int>> generate_random_transactions(vector<int> main_index,
-                                                 int num_transactions,
-                                                 int num_operations) {
+struct atomic_mutex {
+    atomic<int> val{0};
+};
 
-    vector<vector<int>> random_indices;
+bool lock(atomic_mutex *lock) {
+    int expected = 0;
+    bool is_locked = lock->val.compare_exchange_strong(expected, 1);
+    return is_locked;
+}
 
-    auto min = min_element(begin(main_index), end(main_index));
-    auto max = max_element(begin(main_index), end(main_index));
-
-    random_device rd;
-    mt19937 eng(rd());
-    uniform_int_distribution<> distribution(*min, *max);
-
-    for (int i = 0; i < num_transactions; ++i) {
-        vector<int> operation_indices;
-        for (int k = 0; k < num_operations; ++k) {
-            operation_indices.push_back(distribution(eng));
-        }
-        random_indices.push_back(operation_indices);
-    }
-
-    return random_indices;
+void unlock(atomic_mutex *lock) {
+    lock->val.exchange(0);
 }
 
 void insertion_sort(vector<int> &arr, int n) {
@@ -52,89 +42,109 @@ void insertion_sort(vector<int> &arr, int n) {
     }
 }
 
-
-void worker(vector<Row> &table, vector<vector<int>> &random_transactions, const int stride, const int tid) {
+void worker(vector<int> &table, vector<atomic_mutex> &lock_table, vector<vector<int>> &random_transactions, const int stride, const int tid) {
     int start = tid * stride;
     int end = (start + stride) - 1;
 
+    //sort phase
     for(int i = start; i < end; ++i) {
         insertion_sort(random_transactions[i], NUM_OPERATIONS);
     }
-
+    //process transactions
     for (int i = start; i < end; ++i) {
-
-        vector<int> sorted_transaction = random_transactions[i];
-
-        sorted_transaction.erase(unique(sorted_transaction.begin(), sorted_transaction.end()),
-                                 sorted_transaction.end());
-        vector<int> locked_indices;
+        int locked_indices[NUM_OPERATIONS];
+        memset(locked_indices, -1, sizeof(locked_indices));
         bool is_abort = false;
+        int prev = -1;
 
-        for (int index : sorted_transaction) {
-            Row &row = table[index];
-            bool is_acquired = row.lock.try_lock();
-            if (!is_acquired) {
-                is_abort = true;
-                break;
-            } else {
-                locked_indices.push_back(index);
+        //growing phase
+        for (int j = 0; j < NUM_OPERATIONS; ++j) {
+            int idx = random_transactions[i][j];
+            if (idx != prev) {
+                bool is_acquired = lock(&lock_table[idx]);
+                if (!is_acquired) {
+                    is_abort = true;
+                    break;
+                } else {
+                    locked_indices[j] = idx;
+                }
+            }
+            prev = idx;
+        }
+
+        if (is_abort == 0) {
+            //critical section
+            for (int j = 0; j < NUM_OPERATIONS; ++j) {
+                int idx = locked_indices[j];
+                if (idx != -1) {
+                    ++table[idx];
+                }
             }
         }
-        if (!is_abort) {
-            for (int index : sorted_transaction) {
-                Row &row = table[index];
-                int row_data = row.getData();
-                row_data += 1;
-                row.setData(row_data);
+
+        for (int j = 0; j < NUM_OPERATIONS; ++j) {
+            int idx = locked_indices[j];
+            if (idx != -1) {
+                unlock(&lock_table[idx]);
             }
-        }
-        for (int index : locked_indices) {
-            Row &row = table[index];
-            row.lock.unlock();
         }
     }
-
 }
 
 int main() {
+    string OUTPUT_FP = "/home/nicoroble/2phaselocking/data/transactions_readsetsize-" + to_string(NUM_OPERATIONS) + "_transactions-" + to_string(NUM_TRANSACTIONS) + "_tablesize-" + to_string(NUM_RECORDS) + ".tsv";
+
+    const vector<int> NUM_THREAD_VEC= {1,2,4,8,16,32,64,128};
+
+    for(int x = 0; x < NUM_THREAD_VEC.size(); ++x) {
+        const int NUM_THREADS = NUM_THREAD_VEC[x];
+        const int STRIDE = NUM_TRANSACTIONS / NUM_THREADS;
+        vector<double> runtimes;
+
+        for(int n = 0; n < NUM_RUNS; ++n) {
+            int thread_id = 0;
+            double time;
+
+            vector<thread> threads(NUM_THREADS);
+            vector<int> table(NUM_RECORDS, 0);
+            vector<atomic_mutex> lock_table(NUM_RECORDS);
+            vector<vector<int>> random_transactions;
+
+            random_device rd;
+            mt19937 eng(rd());
+            uniform_int_distribution<> distribution(0, NUM_RECORDS - 1);
 
 
-    int thread_id = 0;
-    double time;
+            for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
+                vector<int> operation_indices(NUM_OPERATIONS);
+                for (int j = 0; j < NUM_OPERATIONS; ++j) {
+                    operation_indices[j] = distribution(eng);
+                }
+                random_transactions.push_back(operation_indices);
+            }
 
-    vector<thread> threads(NUM_THREADS);
-    vector<Row> table;
-    vector<int> indices;
+            chrono::high_resolution_clock::time_point start = chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < NUM_RECORDS; ++i) {
-        Row row = Row(i, 0);
-        table.push_back(row);
+            for (thread &t : threads) {
+                t = thread(worker, ref(table), ref(lock_table), ref(random_transactions), STRIDE, thread_id);
+                ++thread_id;
+            }
+
+            for (std::thread &th : threads) {
+                th.join();
+            }
+
+            chrono::high_resolution_clock::time_point end = chrono::high_resolution_clock::now();
+
+            time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
+            runtimes.push_back(time);
+        }
+        ofstream outfile;
+        outfile.open(OUTPUT_FP, ios_base::app);
+        float average_runtime = accumulate(runtimes.begin(), runtimes.end(), 0.0) / runtimes.size();
+        outfile << NUM_THREADS << "\t" << average_runtime  << "\n";
+        outfile.close();
     }
-
-
-    for (int i = 0; i < table.size(); ++i) {
-        indices.push_back(i);
-    }
-
-    vector<vector<int>> random_transactions = generate_random_transactions(indices, NUM_TRANSACTIONS, NUM_OPERATIONS);
-
-    chrono::high_resolution_clock::time_point start = chrono::high_resolution_clock::now();
-
-    for (thread &t : threads) {
-        t = thread(worker, ref(table), ref(random_transactions), STRIDE, thread_id);
-        ++thread_id;
-    }
-
-    for (std::thread &th : threads) {
-        th.join();
-    }
-
-    chrono::high_resolution_clock::time_point end = chrono::high_resolution_clock::now();
-
-    time = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-
-    cout << "Finished after " << time << " milliseconds \n";
-
 }
 
 
