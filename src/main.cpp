@@ -29,9 +29,9 @@ void unlock(atomic_mutex *lock) {
     lock->val.exchange(0);
 }
 
-void insertion_sort(vector<int> &arr, int n) {
+void insertion_sort(vector<int> &arr) {
     int i, key, j;
-    for (i = 1; i < n; i++) {
+    for (i = 1; i < NUM_OPERATIONS; i++) {
         key = arr[i];
         j = i - 1;
         while (j >= 0 && arr[j] > key) {
@@ -48,7 +48,7 @@ void worker(vector<int> &table, vector<atomic_mutex> &lock_table, vector<vector<
 
     //sort phase
     for(int i = start; i < end; ++i) {
-        insertion_sort(random_transactions[i], NUM_OPERATIONS);
+        insertion_sort(random_transactions[i]);
     }
     //process transactions
     for (int i = start; i < end; ++i) {
